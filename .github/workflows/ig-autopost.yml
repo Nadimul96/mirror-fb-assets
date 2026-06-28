@@ -1,0 +1,62 @@
+name: Mirror IG autopost
+
+# Cloud Instagram poster for @mirrorbyclearpath. Runs on GitHub's always-on runners so
+# posts fire whether or not any local machine is awake (IG has NO server-side scheduling,
+# unlike Facebook — so it needs a live runner at post time; this is that runner).
+#
+# Posts ONE due card per run from schedule.csv via post_to_ig.py, then commits the updated
+# posted-ig.json back so state persists across runs (no double-posting). Card images are
+# served from this same repo (raw.githubusercontent.com/.../main/<asset>).
+#
+# REQUIRED: repo secret FB_PAGE_TOKEN = the never-expiring Mirror Page token (with IG perms).
+# Until that secret is set, each run skips cleanly (no error spam).
+
+on:
+  schedule:
+    - cron: "5 13 * * *"   # ~9:05am ET
+    - cron: "5 16 * * *"   # ~12:05pm ET
+    - cron: "5 21 * * *"   # ~5:05pm ET
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "How many due cards to post this run"
+        required: false
+        default: "1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ig-autopost
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install requests
+      - name: Post due card(s) to Instagram
+        env:
+          FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
+        run: |
+          if [ -z "$FB_PAGE_TOKEN" ]; then
+            echo "FB_PAGE_TOKEN secret not set yet — skipping (no-op). Add it to activate."
+            exit 0
+          fi
+          python3 post_to_ig.py --post-due --limit "${{ github.event.inputs.limit || '1' }}" --start 2026-06-26
+      - name: Persist posted-ig.json
+        run: |
+          git config user.name "mirror-ig-bot"
+          git config user.email "bot@aiclearpath.com"
+          git add posted-ig.json
+          if git diff --cached --quiet; then
+            echo "No new post to record."
+          else
+            git commit -m "ig: autopost $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
